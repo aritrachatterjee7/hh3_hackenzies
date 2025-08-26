@@ -34,7 +34,6 @@ type VerificationResult = {
 
 const ITEMS_PER_PAGE = 5
 
-// Define reward points for specific waste types
 const REWARD_POINTS: Record<string, number> = {
   'mobile': 100,
   'smartphone': 100,
@@ -45,7 +44,6 @@ const REWARD_POINTS: Record<string, number> = {
   'monitor': 200,
   'tablet': 150,
   'computer': 300,
-  // Add more waste types and their points as needed
 }
 
 export default function CollectPage() {
@@ -102,7 +100,8 @@ export default function CollectPage() {
       return false
     }
     try {
-      const updatedTask = await updateTaskStatus(taskId, newStatus, user.id)
+      const upperCaseStatus = newStatus.toUpperCase() as 'PENDING' | 'IN_PROGRESS' | 'COMPLETED'
+      const updatedTask = await updateTaskStatus(taskId, upperCaseStatus, user.id)
       if (updatedTask) {
         setTasks(tasks.map(task =>
           task.id === taskId ? { ...task, status: newStatus, collectorId: user.id } : task
@@ -136,15 +135,12 @@ export default function CollectPage() {
   }
 
   const calculateReward = (wasteType: string): number => {
-    // Convert wasteType to lowercase for case-insensitive matching
     const lowerCaseWasteType = wasteType.toLowerCase()
-    // Find the matching key in REWARD_POINTS
     for (const [key, points] of Object.entries(REWARD_POINTS)) {
       if (lowerCaseWasteType.includes(key)) {
         return points
       }
     }
-    // Default reward if no specific match is found
     return Math.floor(Math.random() * 50) + 10
   }
 
@@ -194,20 +190,20 @@ export default function CollectPage() {
         console.log('Verification Result:', parsedResult)
         setVerificationResult(parsedResult)
         setVerificationStatus('success')
-
         if (parsedResult.wasteTypeMatch && parsedResult.confidence > 0.7) {
           if (parsedResult.quantityMatch || parsedResult.confidence > 0.6) {
-            const statusUpdated = await handleStatusChange(selectedTask.id, 'verified')
-            if (statusUpdated) {
-              // Calculate reward based on waste type
+            const collectedWaste = await saveCollectedWaste(selectedTask.id, user.id, parsedResult)
+            if (collectedWaste) {
               const earnedReward = calculateReward(selectedTask.wasteType)
               await saveReward(user.id, earnedReward)
-              await saveCollectedWaste(selectedTask.id, user.id, parsedResult)
               setReward(earnedReward)
               toast.success(`Verification successful! You earned ${earnedReward} points!`, {
                 duration: 5000,
                 position: 'top-center',
               })
+              setTasks(tasks.map(task =>
+                task.id === selectedTask.id ? { ...task, status: 'verified', collectorId: user.id } : task
+              ))
               setSelectedTask(null)
             }
           } else {

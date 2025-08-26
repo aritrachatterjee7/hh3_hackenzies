@@ -12,6 +12,7 @@ import {
 } from '@/utils/db/actions'
 import { useRouter } from 'next/navigation'
 import { toast } from 'react-hot-toast'
+import Image from 'next/image'
 
 interface User {
   id: number
@@ -19,13 +20,30 @@ interface User {
   name: string
 }
 
+interface VerificationResultData {
+  wasteType: string
+  quantity: string
+  confidence: number
+  hazardous?: boolean
+  disposalInstructions?: string
+  recyclingValue?: string
+  classification?: string
+}
+
 interface Report {
   id: number
+  userId: number
   location: string
   wasteType: string
   amount: string
-  createdAt: string
+  imageUrl: string | null
+  verificationResult: VerificationResultData | null
   status: 'pending' | 'in_progress' | 'completed'
+  createdAt: Date | string
+  assignedAt: Date | string | null
+  completedAt: Date | string | null
+  collectorId: number | null
+  updatedAt: Date | string
   hazardous?: boolean
 }
 
@@ -54,7 +72,6 @@ interface Voucher {
   createdAt: string
 }
 
-// Dynamic voucher amounts for specific e-waste types
 const DEVICE_VOUCHER_AMOUNTS: Record<string, number> = {
   mobile: 1000,
   'mobile phone': 1000,
@@ -68,6 +85,12 @@ const DEVICE_VOUCHER_AMOUNTS: Record<string, number> = {
   computer: 5000,
 }
 
+const formatDate = (date: Date | string | null): string => {
+  if (!date) return ''
+  const dateObj = typeof date === 'string' ? new Date(date) : date
+  return dateObj.toISOString().split('T')[0]
+}
+
 export default function ReportPage() {
   const [user, setUser] = useState<User | null>(null)
   const [reports, setReports] = useState<Report[]>([])
@@ -79,21 +102,22 @@ export default function ReportPage() {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [verificationStatus, setVerificationStatus] = useState<'idle' | 'verifying' | 'success' | 'failure' | 'no_waste'>('idle')
-  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null)
+  const [verificationResult, setVerificationResult] = useState<VerificationResultData | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [qrValue, setQrValue] = useState<string>('')
   const [viewingQrReport, setViewingQrReport] = useState<Report | null>(null)
-  const [vouchers, setVouchers] = useState<Voucher[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('eWasteVouchers')
-      return saved ? JSON.parse(saved) : []
-    }
-    return []
-  })
+  const [vouchers, setVouchers] = useState<Voucher[]>([])
   const [showVoucherModal, setShowVoucherModal] = useState(false)
   const [currentVoucher, setCurrentVoucher] = useState<Voucher | null>(null)
   const router = useRouter()
   const geminiApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('eWasteVouchers')
+      setVouchers(saved ? JSON.parse(saved) : [])
+    }
+  }, [])
 
   const generateQrContent = (report: Report) => {
     const currentReport = reports.find(r => r.id === report.id) || report
@@ -104,9 +128,9 @@ E-WASTE REPORT #${currentReport.id}
 ♻️ Type: ${currentReport.wasteType}
 ⚖️ Amount: ${currentReport.amount}
 🔄 Status: ${currentReport.status}
-📅 Reported: ${new Date(currentReport.createdAt).toLocaleDateString()}
+📅 Reported: ${formatDate(currentReport.createdAt)}
 ${currentReport.hazardous ? '⚠️ HAZARDOUS: Handle with care' : ''}
-${verificationResult?.disposalInstructions ? `♻️ Disposal: ${verificationResult.disposalInstructions}` : ''}
+${currentReport.verificationResult?.disposalInstructions ? `♻️ Disposal: ${currentReport.verificationResult.disposalInstructions}` : ''}
 `.trim()
   }
 
@@ -241,7 +265,7 @@ Examples of valid responses:
       const result = await model.generateContent([prompt, ...imageParts])
       const text = await result.response.text()
       const jsonStr = extractJsonFromText(text)
-      const parsedResult = JSON.parse(jsonStr) as VerificationResult
+      const parsedResult = JSON.parse(jsonStr) as VerificationResultData
       if (parsedResult.wasteType === 'none') {
         setVerificationStatus('no_waste')
         toast.error('No e-waste detected. Please try another image.')
@@ -275,17 +299,14 @@ Examples of valid responses:
         newReport.type,
         newReport.amount,
         preview || '',
-        verificationResult ? JSON.stringify(verificationResult) : ''
+        verificationResult || undefined // Pass undefined instead of null
       )
       if (report) {
         const formattedReport: Report = {
-          id: report.id,
-          location: report.location,
-          wasteType: report.wasteType,
-          amount: report.amount,
-          createdAt: new Date(report.createdAt).toISOString().split('T')[0],
-          status: report.status,
+          ...report,
+          createdAt: report.createdAt,
           hazardous: verificationResult?.hazardous || false,
+          verificationResult: verificationResult
         }
         setReports([formattedReport, ...reports])
         setQrValue(generateQrContent(formattedReport))
@@ -294,8 +315,6 @@ Examples of valid responses:
         setPreview(null)
         setVerificationStatus('idle')
         toast.success('Report submitted! Print the QR code and attach it to the waste.')
-
-        // Normalize and map the waste type for voucher eligibility
         let normalizedWasteType = report.wasteType.toLowerCase().trim()
         if (normalizedWasteType.includes('mobile')) normalizedWasteType = 'mobile'
         if (normalizedWasteType.includes('laptop')) normalizedWasteType = 'laptop'
@@ -305,7 +324,6 @@ Examples of valid responses:
         if (normalizedWasteType.includes('notebook')) normalizedWasteType = 'notebook'
         if (normalizedWasteType.includes('ultrabook')) normalizedWasteType = 'ultrabook'
         if (normalizedWasteType.includes('computer')) normalizedWasteType = 'computer'
-
         const voucherAmount = DEVICE_VOUCHER_AMOUNTS[normalizedWasteType]
         if (voucherAmount) {
           addVoucher(normalizedWasteType, voucherAmount)
@@ -327,13 +345,7 @@ Examples of valid responses:
       if (!user) user = await createUser(email, 'Anonymous User')
       setUser(user)
       const recentReports = await getRecentReports()
-      if (recentReports) {
-        setReports(recentReports.map(report => ({
-          ...report,
-          createdAt: new Date(report.createdAt).toISOString().split('T')[0],
-          hazardous: report.hazardous || false,
-        })))
-      }
+      setReports(recentReports)
     }
     checkUser()
   }, [router])
@@ -371,7 +383,13 @@ Examples of valid responses:
             </div>
             {preview && (
               <div className="mt-4 mb-8">
-                <img src={preview} alt="Preview" className="max-w-full h-auto rounded-xl" />
+                <Image
+                  src={preview}
+                  alt="Preview"
+                  width={500}
+                  height={300}
+                  className="max-w-full h-auto rounded-xl"
+                />
               </div>
             )}
             <Button
@@ -546,7 +564,6 @@ Examples of valid responses:
           </div>
         </main>
       </div>
-      {/* Voucher Modal */}
       {showVoucherModal && currentVoucher && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white p-6 rounded-lg max-w-md w-full">
@@ -561,7 +578,7 @@ Examples of valid responses:
             </div>
             <div className="mb-6 text-center">
               <p className="text-gray-700 mb-2">
-                You’ve earned a <strong>₹{currentVoucher.amount} discount</strong> for recycling your <strong>{currentVoucher.deviceType}</strong>!
+                You&apos;ve earned a <strong>₹{currentVoucher.amount} discount</strong> for recycling your <strong>{currentVoucher.deviceType}</strong>!
               </p>
               <p className="text-gray-700 mb-4">
                 Use this code at checkout on <strong>Flipkart, Amazon, or our partner stores</strong> to avail the discount on your next <strong>{currentVoucher.deviceType}</strong> purchase.

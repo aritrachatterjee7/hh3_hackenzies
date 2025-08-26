@@ -14,6 +14,17 @@ export const COLLECTION_STATUS = {
   VERIFIED: 'verified',
 } as const;
 
+// Interface for verification result to match frontend expectations
+interface VerificationResultData {
+  wasteType: string;
+  quantity: string;
+  confidence: number;
+  hazardous?: boolean;
+  disposalInstructions?: string;
+  recyclingValue?: string;
+  classification?: string;
+}
+
 // User Actions
 export async function createUser(email: string, name: string) {
   try {
@@ -42,7 +53,7 @@ export async function createReport(
   wasteType: string,
   amount: string,
   imageUrl?: string,
-  verificationResult?: any
+  verificationResult?: VerificationResultData
 ) {
   try {
     const [report] = await db
@@ -53,7 +64,7 @@ export async function createReport(
         wasteType,
         amount,
         imageUrl,
-        verificationResult,
+        verificationResult: verificationResult ? JSON.stringify(verificationResult) : null,
         status: REPORT_STATUS.PENDING,
       })
       .returning()
@@ -68,7 +79,10 @@ export async function createReport(
 export async function getReportsByUserId(userId: number) {
   try {
     const reports = await db.select().from(Reports).where(eq(Reports.userId, userId)).execute();
-    return reports;
+    return reports.map(report => ({
+      ...report,
+      verificationResult: parseVerificationResult(report.verificationResult)
+    }));
   } catch (error) {
     console.error("Error fetching reports:", error);
     return [];
@@ -77,7 +91,11 @@ export async function getReportsByUserId(userId: number) {
 
 export async function getPendingReports() {
   try {
-    return await db.select().from(Reports).where(eq(Reports.status, REPORT_STATUS.PENDING)).execute();
+    const reports = await db.select().from(Reports).where(eq(Reports.status, REPORT_STATUS.PENDING)).execute();
+    return reports.map(report => ({
+      ...report,
+      verificationResult: parseVerificationResult(report.verificationResult)
+    }));
   } catch (error) {
     console.error("Error fetching pending reports:", error);
     return [];
@@ -101,7 +119,10 @@ export async function updateTaskStatus(
       .where(eq(Reports.id, reportId))
       .returning()
       .execute();
-    return updatedReport;
+    return {
+      ...updatedReport,
+      verificationResult: parseVerificationResult(updatedReport.verificationResult)
+    };
   } catch (error) {
     console.error("Error updating task status:", error);
     throw error;
@@ -122,7 +143,6 @@ export async function saveReward(userId: number, amount: number) {
       })
       .returning()
       .execute();
-
     await createTransaction(userId, 'earned_collect', amount, 'Points earned for collecting waste');
     return reward;
   } catch (error) {
@@ -140,11 +160,38 @@ export async function updateReportStatus(reportId: number, status: keyof typeof 
       .where(eq(Reports.id, reportId))
       .returning()
       .execute();
-    return updatedReport;
+    return {
+      ...updatedReport,
+      verificationResult: parseVerificationResult(updatedReport.verificationResult)
+    };
   } catch (error) {
     console.error("Error updating report status:", error);
     return null;
   }
+}
+
+// Helper function to parse verification result
+function parseVerificationResult(result: unknown): VerificationResultData | null {
+  if (result === null || result === undefined) return null;
+  
+  // If it's already an object with the right shape, return it
+  if (typeof result === 'object' && result !== null && 'wasteType' in result) {
+    return result as VerificationResultData;
+  }
+  
+  // If it's a string, try to parse it
+  if (typeof result === 'string') {
+    try {
+      const parsed = JSON.parse(result);
+      if (parsed && typeof parsed === 'object' && 'wasteType' in parsed) {
+        return parsed as VerificationResultData;
+      }
+    } catch (error) {
+      console.error('Error parsing verificationResult:', error);
+    }
+  }
+  
+  return null;
 }
 
 export async function getRecentReports(limit: number = 10) {
@@ -155,7 +202,18 @@ export async function getRecentReports(limit: number = 10) {
       .orderBy(desc(Reports.createdAt))
       .limit(limit)
       .execute();
-    return reports;
+
+    return reports.map(report => {
+      const verificationResult = parseVerificationResult(report.verificationResult);
+      const hazardous = verificationResult?.hazardous || false;
+      
+      return {
+        ...report,
+        createdAt: report.createdAt.toISOString().split('T')[0],
+        hazardous,
+        verificationResult // This will now be properly typed
+      };
+    });
   } catch (error) {
     console.error("Error fetching recent reports:", error);
     return [];
@@ -179,7 +237,7 @@ export async function getWasteCollectionTasks(limit: number = 20) {
       .execute();
     return tasks.map(task => ({
       ...task,
-      date: task.date.toISOString().split('T')[0], // Format date as YYYY-MM-DD
+      date: task.date.toISOString().split('T')[0],
     }));
   } catch (error) {
     console.error("Error fetching waste collection tasks:", error);
@@ -382,7 +440,7 @@ export async function getCollectedWastesByCollector(collectorId: number) {
   }
 }
 
-export async function saveCollectedWaste(reportId: number, collectorId: number, verificationResult: any) {
+export async function saveCollectedWaste(reportId: number, collectorId: number, verificationResult: VerificationResultData) {
   try {
     const [report] = await db.select().from(Reports).where(eq(Reports.id, reportId)).execute();
     if (!report) {
@@ -395,7 +453,7 @@ export async function saveCollectedWaste(reportId: number, collectorId: number, 
         collectorId,
         collectionDate: new Date(),
         status: COLLECTION_STATUS.VERIFIED,
-        verificationResult,
+        verificationResult: JSON.stringify(verificationResult),
       })
       .returning()
       .execute();

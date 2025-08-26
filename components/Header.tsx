@@ -1,20 +1,19 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Menu, Search, Bell, User, ChevronDown, LogIn, Earth } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Web3Auth } from "@web3auth/modal";
 import { CHAIN_NAMESPACES, IProvider, WEB3AUTH_NETWORK } from "@web3auth/base";
 import { EthereumPrivateKeyProvider } from "@web3auth/ethereum-provider";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { createUser, getUnreadNotifications, markNotificationAsRead, getUserByEmail, getUserBalance } from "@/utils/db/actions";
+import { createUser, getUnreadNotifications, markNotificationAsRead, getUserByEmail } from "@/utils/db/actions";
 import RoleSelectionModal from "@/components/ui/RoleSelectionModal";
 import SecretKeyModal from "@/components/ui/SecretKeyModal";
 
@@ -24,15 +23,15 @@ type Notification = {
   message: string;
 };
 
-interface HeaderProps {
-  onMenuClick: () => void;
-  totalEarnings: number;
-}
-
 interface UserInfo {
   email?: string;
   name?: string;
   role?: 'reporter' | 'collector';
+}
+
+interface HeaderProps {
+  onMenuClick: () => void;
+  totalEarnings: number;
 }
 
 const chainConfig = {
@@ -47,20 +46,14 @@ const chainConfig = {
 
 export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
   const [web3auth, setWeb3auth] = useState<Web3Auth | null>(null);
-  const [provider, setProvider] = useState<IProvider | null>(null); // eslint-disable-line @typescript-eslint/no-unused-vars
   const [loggedIn, setLoggedIn] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [balance, setBalance] = useState(totalEarnings || 0); // eslint-disable-line @typescript-eslint/no-unused-vars
   const [retryCount, setRetryCount] = useState(0);
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showSecretKeyModal, setShowSecretKeyModal] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const maxRetries = 3;
-
-  // Use pathname without assigning to variable since it's not used
-  usePathname();
   const isMobile = useMediaQuery("(max-width: 768px)");
 
   useEffect(() => {
@@ -70,31 +63,24 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
         if (!clientId) {
           throw new Error("WEB3_AUTH_CLIENT_ID is not defined");
         }
-
         const privateKeyProvider = new EthereumPrivateKeyProvider({
           config: { chainConfig },
         });
-
         const networkToUse = retryCount >= 2
           ? WEB3AUTH_NETWORK.CYAN
           : WEB3AUTH_NETWORK.SAPPHIRE_DEVNET;
-
         const web3authInstance = new Web3Auth({
           clientId,
           web3AuthNetwork: networkToUse,
           privateKeyProvider,
         });
-
         await web3authInstance.initModal();
         setWeb3auth(web3authInstance);
-
         if (web3authInstance.connected) {
           setLoggedIn(true);
-          setProvider(web3authInstance.provider);
           const user = await web3authInstance.getUserInfo();
           const role = localStorage.getItem('userRole');
           setUserInfo({ ...user, role: role as 'reporter' | 'collector' });
-
           if (user.email) {
             localStorage.setItem('userEmail', user.email);
             await createUser(user.email, user.name || 'Anonymous User');
@@ -103,7 +89,6 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
         setLoading(false);
       } catch (error) {
         console.error("Error initializing Web3Auth:", error);
-
         if (retryCount < maxRetries) {
           const nextRetry = retryCount + 1;
           setRetryCount(nextRetry);
@@ -113,16 +98,8 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
         }
       }
     };
-
     initWeb3Auth();
   }, [retryCount]);
-
-  useEffect(() => {
-    setBalance(prevBalance => {
-      const newBalance = Math.max(prevBalance || 0, totalEarnings || 0);
-      return isNaN(newBalance) ? 0 : newBalance;
-    });
-  }, [totalEarnings]);
 
   useEffect(() => {
     const fetchNotifications = async () => {
@@ -138,7 +115,6 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
         console.error("Error fetching notifications:", error);
       }
     };
-
     if (userInfo?.email) {
       fetchNotifications();
       const notificationInterval = setInterval(fetchNotifications, 30000);
@@ -146,38 +122,9 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
     }
   }, [userInfo]);
 
-  useEffect(() => {
-    const fetchUserBalance = async () => {
-      try {
-        if (userInfo?.email) {
-          const user = await getUserByEmail(userInfo.email);
-          if (user) {
-            const userBalance = await getUserBalance(user.id);
-            setBalance(prevBalance => {
-              const newBalance = Math.max(prevBalance || 0, userBalance || 0, totalEarnings || 0);
-              return isNaN(newBalance) ? 0 : newBalance;
-            });
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching user balance:", error);
-      }
-    };
-
-    // Fetch balance immediately when the component mounts or userInfo changes
-    fetchUserBalance();
-
-    // Set up polling to fetch balance every 10 seconds
-    const balanceInterval = setInterval(fetchUserBalance, 10000);
-
-    // Clean up the interval when the component unmounts
-    return () => clearInterval(balanceInterval);
-  }, [userInfo, totalEarnings]);
-
   const handleRoleSelection = async (role: 'reporter' | 'collector') => {
     localStorage.setItem('userRole', role);
     setShowRoleModal(false);
-
     if (role === 'collector') {
       setShowSecretKeyModal(true);
     } else {
@@ -187,30 +134,22 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
 
   const handleSecretKeySubmit = async (secretKey: string) => {
     try {
-      // Check if the secret key is "123456"
       if (secretKey !== "123456") {
         alert("Invalid secret key. Please try again.");
         return;
       }
-
-      // If the secret key is valid, proceed with Web3Auth login
       if (!web3auth) {
         throw new Error("web3auth not initialized");
       }
-
-      const web3authProvider = await web3auth.connect();
-      setProvider(web3authProvider);
+      await web3auth.connect();
       setLoggedIn(true);
-
       const user = await web3auth.getUserInfo();
       const role = localStorage.getItem('userRole') as 'reporter' | 'collector';
       setUserInfo({ ...user, role });
-
       if (user.email) {
         localStorage.setItem('userEmail', user.email);
         await createUser(user.email, user.name || 'Anonymous User');
       }
-
       setShowSecretKeyModal(false);
     } catch (error) {
       console.error("Error during secret key submission or Web3Auth login:", error);
@@ -223,15 +162,11 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
       if (!web3auth) {
         throw new Error("web3auth not initialized");
       }
-
-      const web3authProvider = await web3auth.connect();
-      setProvider(web3authProvider);
+      await web3auth.connect();
       setLoggedIn(true);
-
       const user = await web3auth.getUserInfo();
       const role = localStorage.getItem('userRole') as 'reporter' | 'collector';
       setUserInfo({ ...user, role });
-
       if (user.email) {
         localStorage.setItem('userEmail', user.email);
         await createUser(user.email, user.name || 'Anonymous User');
@@ -247,9 +182,7 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
       if (!web3auth) {
         throw new Error("web3auth not initialized");
       }
-
       await web3auth.logout();
-      setProvider(null);
       setLoggedIn(false);
       setUserInfo(null);
       localStorage.removeItem('userEmail');
@@ -280,7 +213,7 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
         <div className="flex items-center justify-between px-4 py-2">
           <div className="flex items-center">
-            <Button variant="ghost" size="icon" className="mr-2 md:mr-4" onClick={() => { onMenuClick(); setIsSidebarOpen(!isSidebarOpen); }}>
+            <Button variant="ghost" size="icon" className="mr-2 md:mr-4" onClick={onMenuClick}>
               <Menu className="h-6 w-6" />
             </Button>
             <Link href="/" className="flex items-center">
@@ -290,7 +223,6 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
               </div>
             </Link>
           </div>
-
           {!isMobile && (
             <div className="flex-1 max-w-xl mx-4">
               <div className="relative">
@@ -303,14 +235,12 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
               </div>
             </div>
           )}
-
           <div className="flex items-center space-x-4 md:space-x-6">
             {isMobile && (
               <Button variant="ghost" size="icon" className="mr-2">
                 <Search className="h-5 w-5" />
               </Button>
             )}
-
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="relative">
@@ -340,7 +270,6 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-
             {!loggedIn ? (
               <Button
                 onClick={() => setShowRoleModal(true)}
@@ -375,13 +304,11 @@ export default function Header({ onMenuClick, totalEarnings }: HeaderProps) {
           </div>
         </div>
       </header>
-
       <RoleSelectionModal
         showRoleModal={showRoleModal}
         setShowRoleModal={setShowRoleModal}
         handleRoleSelection={handleRoleSelection}
       />
-
       <SecretKeyModal
         showModal={showSecretKeyModal}
         onClose={() => setShowSecretKeyModal(false)}
